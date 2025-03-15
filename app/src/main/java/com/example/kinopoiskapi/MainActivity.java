@@ -8,22 +8,22 @@ import android.widget.TextView;
 import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
 import com.bumptech.glide.Glide;
-import org.json.JSONArray;
-import org.json.JSONObject;
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.net.URLEncoder;
-import java.util.ArrayList;
+
 import java.util.List;
+
+import retrofit2.Call;
+import retrofit2.Callback;
+import retrofit2.Response;
+import retrofit2.Retrofit;
+import retrofit2.converter.gson.GsonConverterFactory;
 
 public class MainActivity extends AppCompatActivity {
     private static final String API_TOKEN = "1af69720-4b53-4776-82f9-3b16946a0b2e";
-    private static final String API_SEARCH_URL = "https://kinopoiskapiunofficial.tech/api/v2.1/films/search-by-keyword?keyword=";
+    private static final String BASE_URL = "https://kinopoiskapiunofficial.tech/";
     private TextView resultTextView;
     private EditText searchEditText;
     private ImageView posterImageView;
+    private KinopoiskApi api;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -34,6 +34,13 @@ public class MainActivity extends AppCompatActivity {
         searchEditText = findViewById(R.id.searchEditText);
         posterImageView = findViewById(R.id.posterImageView);
         Button searchButton = findViewById(R.id.searchButton);
+
+        // Инициализация Retrofit
+        Retrofit retrofit = new Retrofit.Builder()
+                .baseUrl(BASE_URL)
+                .addConverterFactory(GsonConverterFactory.create())
+                .build();
+        api = retrofit.create(KinopoiskApi.class);
 
         searchButton.setOnClickListener(v -> {
             String query = searchEditText.getText().toString().trim();
@@ -57,66 +64,23 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void searchMovies(String query) {
-        new Thread(() -> {
-            try {
-                String encodedQuery = URLEncoder.encode(query, "UTF-8");
-                URL url = new URL(API_SEARCH_URL + encodedQuery);
-                HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-                connection.setRequestMethod("GET");
-                connection.setRequestProperty("X-API-KEY", API_TOKEN);
-                connection.setRequestProperty("Accept", "application/json");
-
-                int responseCode = connection.getResponseCode();
-
-                if (responseCode == HttpURLConnection.HTTP_OK) {
-                    BufferedReader reader = new BufferedReader(
-                            new InputStreamReader(connection.getInputStream()));
-                    StringBuilder response = new StringBuilder();
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        response.append(line);
-                    }
-                    reader.close();
-
-                    List<MovieResponse> movies = parseSearchResponse(response.toString());
-                    runOnUiThread(() -> displaySearchResults(movies));
+        Call<SearchResponse> call = api.searchMovies(API_TOKEN, query);
+        call.enqueue(new Callback<SearchResponse>() {
+            @Override
+            public void onResponse(Call<SearchResponse> call, Response<SearchResponse> response) {
+                if (response.isSuccessful() && response.body() != null) {
+                    List<MovieResponse> movies = response.body().getFilms();
+                    displaySearchResults(movies);
                 } else {
-                    handleError(responseCode);
-                }
-
-                connection.disconnect();
-            } catch (Exception e) {
-                runOnUiThread(() -> showError("Ошибка соединения: " + e.getMessage()));
-            }
-        }).start();
-    }
-
-    private List<MovieResponse> parseSearchResponse(String jsonResponse) throws Exception {
-        List<MovieResponse> movies = new ArrayList<>();
-        JSONObject jsonObject = new JSONObject(jsonResponse);
-        JSONArray filmsArray = jsonObject.getJSONArray("films");
-
-        for (int i = 0; i < filmsArray.length(); i++) {
-            JSONObject film = filmsArray.getJSONObject(i);
-
-            int id = film.optInt("filmId", 0);
-            String name = film.optString("nameRu", "Нет названия");
-            String description = film.optString("description", "Нет описания");
-            String year = film.optString("year", "Не указан");
-            String rating = film.optString("rating", "Нет рейтинга");
-            String posterUrl = film.optString("posterUrl", "");
-
-            List<String> genres = new ArrayList<>();
-            JSONArray genresArray = film.optJSONArray("genres");
-            if (genresArray != null) {
-                for (int j = 0; j < genresArray.length(); j++) {
-                    genres.add(genresArray.getJSONObject(j).optString("genre", ""));
+                    handleError(response.code());
                 }
             }
 
-            movies.add(new MovieResponse(id, name, description, year, rating, posterUrl, genres));
-        }
-        return movies;
+            @Override
+            public void onFailure(Call<SearchResponse> call, Throwable t) {
+                showError("Ошибка соединения: " + t.getMessage());
+            }
+        });
     }
 
     private void displaySearchResults(List<MovieResponse> movies) {
@@ -126,6 +90,7 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
+        // Берем первый фильм из результатов
         MovieResponse movie = movies.get(0);
 
         String movieInfo = "Название: " + movie.getName() + "\n" +
@@ -136,6 +101,7 @@ public class MainActivity extends AppCompatActivity {
 
         resultTextView.setText(movieInfo);
 
+        // Загружаем постер
         if (!movie.getPosterUrl().isEmpty()) {
             Glide.with(this)
                     .load(movie.getPosterUrl())
@@ -165,7 +131,7 @@ public class MainActivity extends AppCompatActivity {
             default:
                 errorMessage = "Неизвестная ошибка (код: " + responseCode + ")";
         }
-        runOnUiThread(() -> showError(errorMessage));
+        showError(errorMessage);
     }
 
     private void showError(String message) {
